@@ -3,14 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
-	"io/ioutil"
-	"net/http"
+	"github.com/nu7hatch/gouuid"
+	"github.com/streadway/amqp"
 	"order/db"
 	"order/queue"
 	"os"
 	"time"
-	"github.com/nu7hatch/gouuid"
 )
 
 type Product struct {
@@ -39,47 +39,59 @@ func init() {
 }
 
 func main() {
+	var param string
+
+	flag.StringVar(&param, "opt", "", "Usage")
+	flag.Parse()
 
 	in := make(chan []byte)
-
 	connection := queue.Connect()
-	queue.StartConsuming(connection, in)
-	for payload := range in {
-		createOrder(payload)
-		fmt.Println(string(payload))
+
+	switch param {
+	case "checkout":
+		queue.StartConsuming("checkout_queue", connection, in)
+		for payload := range in {
+			notifyOrderCrated(createOrder(payload), connection)
+			fmt.Println(string(payload))
+		}
+	case "payment":
+		queue.StartConsuming("payment_queue", connection, in)
+		var order Order
+		for payload := range in {
+			json.Unmarshal(payload, &order)
+			saveOrder(order)
+			fmt.Println("Payment: " + order.Status)
+			fmt.Println(string(payload))
+		}
+
 	}
 
 }
 
-func createOrder(payload []byte){
+func createOrder(payload []byte) Order {
 	var order Order
 	json.Unmarshal(payload, &order)
 
-	uuid,_ := uuid.NewV4()
+	uuid, _ := uuid.NewV4()
 	order.Uuid = uuid.String()
-	order.Status = "pendente"
+	order.Status = "Pendente"
 	order.CreatedAt = time.Now()
 	saveOrder(order)
+	return order
 }
 
-func saveOrder(order Order){
+func saveOrder(order Order) {
 	json, _ := json.Marshal(order)
 	connection := db.Connect()
 
 	err := connection.Set(ctx, order.Uuid, string(json), 0).Err()
 	if err != nil {
-		panic(err)
+		panic(err.Error())
 	}
 
 }
 
-func getProductById(id string) Product{
-	response, err := http.Get(productsUrl + "/product/" + id)
-	if err != nil{
-		fmt.Printf("The HTTP request failed with error: %s\n", err)
-	}
-	data, _ := ioutil.ReadAll(response.Body)
-	var product Product
-	json.Unmarshal(data, product)
-	return product
+func notifyOrderCrated(order Order, ch *amqp.Channel) {
+	json, _ := json.Marshal(order)
+	queue.Notify(json, "order_ex", "", ch)
 }
