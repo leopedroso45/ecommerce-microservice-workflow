@@ -51,7 +51,7 @@ func main() {
 	case "checkout":
 		queue.StartConsuming("checkout_queue", connection, in)
 		for payload := range in {
-			notifyOrderCrated(createOrder(payload), connection)
+			notifyOrderCreated(createOrder(payload), connection)
 			fmt.Println(string(payload))
 		}
 	case "payment":
@@ -91,7 +91,7 @@ func saveOrder(order Order) {
 
 }
 
-func notifyOrderCrated(order Order, ch *amqp.Channel) {
+func notifyOrderCreated(order Order, ch *amqp.Channel) {
 	json, _ := json.Marshal(order)
 	queue.Notify(json, "order_ex", "", ch)
 }
